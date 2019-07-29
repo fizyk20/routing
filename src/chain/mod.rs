@@ -25,7 +25,7 @@ pub use self::{
     network_event::{ExpectCandidatePayload, NetworkEvent, OnlinePayload},
     proof::{Proof, ProofSet, ProvingSection},
     section_info::SectionInfo,
-    shared_state::PrefixChange,
+    shared_state::{PrefixChange, SectionProofChain},
 };
 use std::fmt::{self, Debug, Formatter};
 

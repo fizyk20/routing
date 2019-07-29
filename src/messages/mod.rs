@@ -17,7 +17,7 @@ pub use self::{
 };
 use super::{QUORUM_DENOMINATOR, QUORUM_NUMERATOR};
 use crate::{
-    chain::{GenesisPfxInfo, Proof, ProofSet, ProvingSection, SectionInfo},
+    chain::{GenesisPfxInfo, Proof, ProofSet, ProvingSection, SectionInfo, SectionProofChain},
     error::{Result, RoutingError},
     event::Event,
     id::{FullId, PublicId},
@@ -25,7 +25,7 @@ use crate::{
     sha3::Digest256,
     types::MessageId,
     xor_name::XorName,
-    XorTargetInterval,
+    BlsSignature, XorTargetInterval,
 };
 use hex_fmt::HexFmt;
 use itertools::Itertools;
@@ -78,6 +78,15 @@ impl HopMessage {
     }
 }
 
+/// Metadata needed for verification of the sender
+#[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize)]
+pub struct SecurityMetadata {
+    proof: SectionProofChain,
+    first_prefix: Option<Prefix<XorName>>,
+    last_prefix: Prefix<XorName>,
+    signature: BlsSignature,
+}
+
 /// Wrapper around a routing message, signed by the originator of the message.
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct SignedRoutingMessage {
@@ -91,6 +100,8 @@ pub struct SignedRoutingMessage {
     /// Each entry proves the authenticity of the previous one. The last one should be known by the
     /// receiver, while the first one proves the `src_section` itself.
     proving_sections: Vec<ProvingSection>,
+    /// Optional metadata for verifying the sender
+    security_metadata: Option<SecurityMetadata>,
 }
 
 impl SignedRoutingMessage {
@@ -111,6 +122,7 @@ impl SignedRoutingMessage {
             src_section: src_section.into(),
             signatures,
             proving_sections: Vec::new(),
+            security_metadata: None,
         })
     }
 
