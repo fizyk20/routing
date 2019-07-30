@@ -32,10 +32,8 @@ impl SignatureAccumulator {
                 return None;
             }
         };
-        if let Some(&mut (ref mut existing_msg, _)) = self.msgs.get_mut(&hash) {
-            // TODO: should we somehow merge other parts of the message? like the proving sections
-            // etc.
-            existing_msg.add_signatures(msg);
+        if let Some(&mut (ref mut _existing_msg, _)) = self.msgs.get_mut(&hash) {
+            // TODO: collect signature shares
         } else {
             let _ = self.msgs.insert(hash, (msg, Instant::now()));
         }
@@ -57,13 +55,13 @@ impl SignatureAccumulator {
     fn remove_if_complete(&mut self, hash: &Digest256) -> Option<SignedRoutingMessage> {
         match self.msgs.get_mut(hash) {
             None => return None,
-            Some(&mut (ref mut msg, _)) => {
-                if !msg.check_fully_signed() {
-                    return None;
-                }
+            Some(&mut (ref mut _msg, _)) => {
+                // TODO: check if enough signature shares
+                return None;
             }
         }
-        self.msgs.remove(hash).map(|(msg, _)| msg)
+        // TODO: uncomment when check above is implemented
+        // self.msgs.remove(hash).map(|(msg, _)| msg)
     }
 }
 
@@ -110,15 +108,13 @@ mod tests {
             let sec_info = unwrap!(SectionInfo::new(all_ids, prefix, None));
             let signed_msg = unwrap!(SignedRoutingMessage::new(
                 routing_msg.clone(),
-                msg_sender_id,
                 sec_info.clone()
             ));
             let signature_msgs = other_ids
-                .map(|id| {
+                .map(|_id| {
                     unwrap!(SignedDirectMessage::new(
                         DirectMessage::MessageSignature(unwrap!(SignedRoutingMessage::new(
                             routing_msg.clone(),
-                            id,
                             sec_info.clone(),
                         ))),
                         msg_sender_id,
@@ -186,14 +182,13 @@ mod tests {
                     ref unexpected_msg => panic!("Unexpected message: {:?}", unexpected_msg),
                 };
 
-                if let Some(mut returned_msg) = result {
+                if let Some(returned_msg) = result {
                     assert_eq!(sig_accumulator.msgs.len(), old_num_msgs - 1);
                     assert_eq!(
                         msg_and_sigs.signed_msg.routing_message(),
                         returned_msg.routing_message()
                     );
                     unwrap!(returned_msg.check_integrity());
-                    assert!(returned_msg.check_fully_signed());
                 }
             });
         });
