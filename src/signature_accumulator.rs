@@ -6,45 +6,75 @@
 // KIND, either express or implied. Please review the Licences for the specific language governing
 // permissions and limitations relating to use of the SAFE Network Software.
 
-use crate::messages::SignedRoutingMessage;
-use crate::sha3::Digest256;
-use crate::time::{Duration, Instant};
+use crate::{
+    messages::RoutingMessage,
+    sha3::Digest256,
+    time::{Duration, Instant},
+    BlsPublicKeySet, BlsPublicKeyShare, BlsSignature, BlsSignatureShare,
+};
 use itertools::Itertools;
+use maidsafe_utilities::serialisation::serialise;
 use std::collections::HashMap;
 
 /// Time (in seconds) within which a message and a quorum of signatures need to arrive to
 /// accumulate.
 pub const ACCUMULATION_TIMEOUT: Duration = Duration::from_secs(30);
 
+struct AccumulatorEntry {
+    shares: HashMap<BlsPublicKeyShare, BlsSignatureShare>,
+    timestamp: Instant,
+}
+
 #[derive(Default)]
 pub struct SignatureAccumulator {
-    msgs: HashMap<Digest256, (SignedRoutingMessage, Instant)>,
+    msgs: HashMap<Digest256, AccumulatorEntry>,
 }
 
 impl SignatureAccumulator {
     /// Adds the given signature to the list of pending signatures or to the appropriate
     /// `SignedMessage`. Returns the message, if it has enough signatures now.
-    pub fn add_proof(&mut self, msg: SignedRoutingMessage) -> Option<SignedRoutingMessage> {
+    pub fn add_proof(
+        &mut self,
+        msg: &RoutingMessage,
+        pk_share: BlsPublicKeyShare,
+        sig: BlsSignatureShare,
+        pk_set: &BlsPublicKeySet,
+    ) -> Option<BlsSignature> {
         self.remove_expired();
-        let hash = match msg.routing_message().hash() {
+        // TODO: hash() below also serialises the message - this could probably be optimised
+        let serialised_msg = match serialise(msg) {
+            Ok(serialised_msg) => serialised_msg,
+            _ => {
+                return None;
+            }
+        };
+        if !pk_share.verify(&sig, serialised_msg) {
+            return None;
+        }
+        let hash = match msg.hash() {
             Ok(hash) => hash,
             _ => {
                 return None;
             }
         };
-        if let Some(&mut (ref mut _existing_msg, _)) = self.msgs.get_mut(&hash) {
-            // TODO: collect signature shares
+        if let Some(entry) = self.msgs.get_mut(&hash) {
+            let _ = entry.shares.insert(pk_share, sig);
         } else {
-            let _ = self.msgs.insert(hash, (msg, Instant::now()));
+            let mut entry = AccumulatorEntry {
+                shares: HashMap::new(),
+                timestamp: Instant::now(),
+            };
+            let _ = entry.shares.insert(pk_share, sig);
+            let _ = self.msgs.insert(hash, entry);
         }
-        self.remove_if_complete(&hash)
+        self.remove_if_complete(&hash, pk_set)
     }
 
     fn remove_expired(&mut self) {
         let expired_msgs = self
             .msgs
             .iter()
-            .filter(|&(_, &(_, ref time))| time.elapsed() > ACCUMULATION_TIMEOUT)
+            .filter(|(_, entry)| entry.timestamp.elapsed() > ACCUMULATION_TIMEOUT)
             .map(|(hash, _)| *hash)
             .collect_vec();
         for hash in expired_msgs {
@@ -52,16 +82,24 @@ impl SignatureAccumulator {
         }
     }
 
-    fn remove_if_complete(&mut self, hash: &Digest256) -> Option<SignedRoutingMessage> {
-        match self.msgs.get_mut(hash) {
-            None => return None,
-            Some(&mut (ref mut _msg, _)) => {
-                // TODO: check if enough signature shares
-                return None;
-            }
+    fn remove_if_complete(
+        &mut self,
+        hash: &Digest256,
+        pk_set: &BlsPublicKeySet,
+    ) -> Option<BlsSignature> {
+        if let Some(full_sig) = self.msgs.get(hash).and_then(|entry| {
+            pk_set.combine_signatures(
+                entry
+                    .shares
+                    .iter()
+                    .map(|(pk_share, sig_share)| (pk_share.clone(), sig_share)),
+            )
+        }) {
+            let _ = self.msgs.remove(hash);
+            Some(full_sig)
+        } else {
+            None
         }
-        // TODO: uncomment when check above is implemented
-        // self.msgs.remove(hash).map(|(msg, _)| msg)
     }
 }
 

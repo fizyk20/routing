@@ -40,7 +40,7 @@ use crate::{
     types::MessageId,
     utils::{self, DisplayDuration, XorTargetInterval},
     xor_name::XorName,
-    ConnectionInfo, NetworkService,
+    BlsPublicKeySet, BlsPublicKeyShare, BlsSignatureShare, ConnectionInfo, NetworkService,
 };
 use itertools::Itertools;
 use log::LogLevel;
@@ -300,6 +300,14 @@ impl Elder {
         }
     }
 
+    fn public_key_share(&self) -> BlsPublicKeyShare {
+        BlsPublicKeyShare::from_pub_id(*self.full_id.public_id())
+    }
+
+    fn public_key_set(&self) -> BlsPublicKeySet {
+        BlsPublicKeySet::from_section_info(self.chain.our_info().clone())
+    }
+
     fn handle_parsec_poke(&mut self, msg_version: u64, pub_id: PublicId) {
         self.send_parsec_gossip(Some((msg_version, pub_id)))
     }
@@ -481,7 +489,8 @@ impl Elder {
     /// message, handles it.
     fn handle_message_signature(
         &mut self,
-        msg: SignedRoutingMessage,
+        msg: RoutingMessage,
+        sig: BlsSignatureShare,
         pub_id: PublicId,
     ) -> Result<(), RoutingError> {
         if !self.peer_mgr.get_peer(&pub_id).map_or(false, Peer::is_node) {
@@ -492,8 +501,13 @@ impl Elder {
             return Err(RoutingError::UnknownConnection(pub_id));
         }
 
-        if let Some(signed_msg) = self.sig_accumulator.add_proof(msg.clone()) {
-            self.handle_signed_message(signed_msg)?;
+        if let Some(_sig) = self.sig_accumulator.add_proof(
+            &msg,
+            BlsPublicKeyShare::from_pub_id(pub_id),
+            sig,
+            &self.public_key_set(),
+        ) {
+            // TODO
         }
         Ok(())
     }
@@ -1693,7 +1707,7 @@ impl Base for Elder {
 
         use crate::messages::DirectMessage::*;
         match msg {
-            MessageSignature(msg) => self.handle_message_signature(msg, pub_id)?,
+            MessageSignature(msg, sig) => self.handle_message_signature(msg, sig, pub_id)?,
             BootstrapRequest => {
                 if let Err(error) = self.handle_bootstrap_request(pub_id) {
                     warn!(
@@ -1832,14 +1846,17 @@ impl Bootstrapped for Elder {
             Client { .. } => None,
         };
 
-        let signed_msg = SignedRoutingMessage::new(routing_msg, sending_sec)?;
-
-        for target in Iterator::flatten(
-            self.get_signature_targets(&signed_msg.routing_message().src)
-                .into_iter(),
-        ) {
+        for target in Iterator::flatten(self.get_signature_targets(&routing_msg.src).into_iter()) {
             if target == *self.name() {
-                if let Some(mut msg) = self.sig_accumulator.add_proof(signed_msg.clone()) {
+                let sig = routing_msg.to_signature(self.full_id.signing_private_key())?;
+                if let Some(_sig) = self.sig_accumulator.add_proof(
+                    &routing_msg,
+                    self.public_key_share(),
+                    sig,
+                    &self.public_key_set(),
+                ) {
+                    let mut msg =
+                        SignedRoutingMessage::new(routing_msg.clone(), sending_sec.clone())?;
                     if self.in_authority(&msg.routing_message().dst) {
                         self.handle_signed_message(msg)?;
                     } else {
@@ -1850,19 +1867,18 @@ impl Bootstrapped for Elder {
                 trace!(
                     "{} Sending a signature for message {:?} to {:?}",
                     self,
-                    signed_msg.routing_message(),
+                    routing_msg,
                     target
                 );
+                let sig = routing_msg.to_signature(self.full_id.signing_private_key())?;
                 self.send_direct_message(
                     &pub_id,
-                    DirectMessage::MessageSignature(signed_msg.clone()),
+                    DirectMessage::MessageSignature(routing_msg.clone(), sig),
                 );
             } else {
                 error!(
                     "{} Failed to resolve signature target {:?} for message {:?}",
-                    self,
-                    target,
-                    signed_msg.routing_message()
+                    self, target, routing_msg,
                 );
                 return Err(RoutingError::RoutingTable(RoutingTableError::NoSuchPeer));
             }

@@ -9,10 +9,11 @@
 use crate::{
     error::{BootstrapResponseError, RoutingError},
     id::{FullId, PublicId},
-    messages::SignedRoutingMessage,
+    messages::RoutingMessage,
     parsec,
     routing_table::Authority,
     xor_name::XorName,
+    BlsSignatureShare,
 };
 use maidsafe_utilities::serialisation::serialise;
 use safe_crypto::Signature;
@@ -30,7 +31,7 @@ use std::{
 pub enum DirectMessage {
     /// Sent from members of a section or group message's source authority to the first hop. The
     /// message will only be relayed once enough signatures have been accumulated.
-    MessageSignature(SignedRoutingMessage),
+    MessageSignature(RoutingMessage, BlsSignatureShare),
     /// Sent from a newly connected client to the bootstrap node to prove that it is the owner of
     /// the client's claimed public ID.
     BootstrapRequest,
@@ -89,7 +90,7 @@ impl Debug for DirectMessage {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
         use self::DirectMessage::*;
         match *self {
-            MessageSignature(ref msg) => write!(formatter, "MessageSignature ({:?})", msg),
+            MessageSignature(ref msg, _) => write!(formatter, "MessageSignature ({:?})", msg),
             BootstrapRequest => write!(formatter, "BootstrapRequest"),
             BootstrapResponse(ref result) => write!(formatter, "BootstrapResponse({:?})", result),
             ConnectionResponse => write!(formatter, "ConnectionResponse"),
@@ -137,8 +138,10 @@ impl Hash for DirectMessage {
         mem::discriminant(self).hash(state);
 
         match *self {
-            MessageSignature(ref msg) => {
-                msg.hash(state);
+            MessageSignature(ref msg, ref sig) => {
+                // msg.hash(state) collides with RoutingMessage::hash
+                Hash::hash(msg, state);
+                Hash::hash(sig, state);
             }
             BootstrapRequest | ConnectionResponse | ResourceProofResponseReceipt => (),
             BootstrapResponse(ref result) => result.hash(state),

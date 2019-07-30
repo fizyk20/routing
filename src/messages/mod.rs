@@ -158,11 +158,6 @@ impl SignedRoutingMessage {
         self.src_section.as_ref()
     }
 
-    /// Returns the number of nodes in the source authority.
-    pub fn src_size(&self) -> usize {
-        self.src_section.as_ref().map_or(0, |si| si.members().len())
-    }
-
     /// Returns the routing message without cloning it.
     pub fn into_routing_message(self) -> RoutingMessage {
         self.content
@@ -171,11 +166,6 @@ impl SignedRoutingMessage {
     /// The routing message that was signed.
     pub fn routing_message(&self) -> &RoutingMessage {
         &self.content
-    }
-
-    /// The priority Crust should send this message with.
-    pub fn priority(&self) -> u8 {
-        self.content.priority()
     }
 }
 
