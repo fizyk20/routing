@@ -21,8 +21,8 @@ use crate::{
     event::Event,
     id::{FullId, PublicId},
     messages::{
-        DirectMessage, HopMessage, MessageContent, RoutingMessage, SignedRoutingMessage,
-        UserMessage,
+        DirectMessage, HopMessage, MessageContent, RoutingMessage, SecurityMetadata,
+        SignedRoutingMessage, UserMessage,
     },
     outbox::EventBox,
     parsec::{self, ParsecMap},
@@ -501,13 +501,19 @@ impl Elder {
             return Err(RoutingError::UnknownConnection(pub_id));
         }
 
-        if let Some(_sig) = self.sig_accumulator.add_proof(
+        if let Some(sig) = self.sig_accumulator.add_proof(
             &msg,
             BlsPublicKeyShare::from_pub_id(pub_id),
             sig,
             &self.public_key_set(),
         ) {
-            // TODO
+            let security_metadata = SecurityMetadata::new(&msg, &self.chain, sig)?;
+            let signed_msg = SignedRoutingMessage::new(
+                msg.clone(),
+                self.chain.our_info().clone(),
+                Some(security_metadata),
+            );
+            self.handle_signed_message(signed_msg)?;
         }
         Ok(())
     }
@@ -1849,14 +1855,18 @@ impl Bootstrapped for Elder {
         for target in Iterator::flatten(self.get_signature_targets(&routing_msg.src).into_iter()) {
             if target == *self.name() {
                 let sig = routing_msg.to_signature(self.full_id.signing_private_key())?;
-                if let Some(_sig) = self.sig_accumulator.add_proof(
+                if let Some(sig) = self.sig_accumulator.add_proof(
                     &routing_msg,
                     self.public_key_share(),
                     sig,
                     &self.public_key_set(),
                 ) {
-                    let mut msg =
-                        SignedRoutingMessage::new(routing_msg.clone(), sending_sec.clone())?;
+                    let security_metadata = SecurityMetadata::new(&routing_msg, &self.chain, sig)?;
+                    let mut msg = SignedRoutingMessage::new(
+                        routing_msg.clone(),
+                        sending_sec.clone(),
+                        Some(security_metadata),
+                    );
                     if self.in_authority(&msg.routing_message().dst) {
                         self.handle_signed_message(msg)?;
                     } else {

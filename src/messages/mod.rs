@@ -85,6 +85,17 @@ pub struct SecurityMetadata {
 }
 
 impl SecurityMetadata {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(msg: &RoutingMessage, chain: &Chain, signature: BlsSignature) -> Result<Self> {
+        let serialised_msg = serialise(msg)?;
+        let proof = chain.prove(&msg.dst, &signature, &serialised_msg);
+        Ok(Self {
+            proof,
+            sender_prefix: *chain.our_prefix(),
+            signature,
+        })
+    }
+
     pub fn verify_sig(&self, bytes: Vec<u8>) -> bool {
         self.proof.last_public_key().verify(&self.signature, bytes)
     }
@@ -117,16 +128,16 @@ impl SignedRoutingMessage {
     /// Creates a `SignedMessage` with the given `content` and signed by the given `full_id`.
     ///
     /// Requires the list `src_section` of nodes who should sign this message.
-    #[allow(clippy::new_ret_no_self)]
     pub fn new<T: Into<Option<SectionInfo>>>(
         content: RoutingMessage,
         src_section: T,
-    ) -> Result<SignedRoutingMessage> {
-        Ok(SignedRoutingMessage {
+        security_metadata: Option<SecurityMetadata>,
+    ) -> SignedRoutingMessage {
+        SignedRoutingMessage {
             content,
             src_section: src_section.into(),
-            security_metadata: None,
-        })
+            security_metadata,
+        }
     }
 
     /// Confirms the signatures.
