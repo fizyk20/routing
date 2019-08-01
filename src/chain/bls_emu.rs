@@ -10,10 +10,9 @@
 use super::{delivery_group_size, NetworkEvent, ProofSet, SectionInfo};
 use crate::id::{FullId, PublicId};
 use parsec;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-};
+#[cfg(test)]
+use std::collections::BTreeSet;
+use std::{collections::BTreeMap, fmt};
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct PublicKeySet {
@@ -29,7 +28,7 @@ pub type SignatureShare = ::safe_crypto::Signature;
 pub struct SecretKeyShare(FullId);
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize)]
-pub struct PublicKeyShare(PublicId);
+pub struct PublicKeyShare(pub PublicId);
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct Signature {
@@ -67,7 +66,7 @@ impl PublicKeyShare {
 }
 
 impl PublicKeySet {
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn new(threshold: usize, keys: BTreeSet<PublicId>) -> Self {
         let sec_info = SectionInfo::new(keys, Default::default(), None).unwrap();
         Self {
@@ -107,7 +106,7 @@ impl PublicKeySet {
         }
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn public_key(&self) -> PublicKey {
         PublicKey(self.clone())
     }
@@ -177,7 +176,7 @@ mod test {
         assert!(sigs.iter().all(|(pks, sig)| pks.verify(sig, &data)));
 
         assert!(pk_set
-            .combine_signatures(sigs.iter().map(|(pk, sig)| (*pk, sig)))
+            .combine_signatures(sigs.iter().map(|(pk, sig)| (pk.clone(), sig)))
             .is_none());
 
         sigs.push((
@@ -185,7 +184,8 @@ mod test {
             sk_shares[min_sigs - 1].sign(&data),
         ));
 
-        let sig = unwrap!(pk_set.combine_signatures(sigs.iter().map(|(pk, sig)| (*pk, sig))));
+        let sig =
+            unwrap!(pk_set.combine_signatures(sigs.iter().map(|(pk, sig)| (pk.clone(), sig))));
 
         assert!(pk_set.public_key().verify(&sig, &data));
     }

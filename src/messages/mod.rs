@@ -496,7 +496,7 @@ mod tests {
                 message_id: MessageId::new(),
             },
         };
-        let signed_msg = unwrap!(SignedRoutingMessage::new(msg.clone(), None));
+        let signed_msg = SignedRoutingMessage::new(msg.clone(), None, None);
 
         assert_eq!(msg, *signed_msg.routing_message());
 
@@ -538,7 +538,7 @@ mod tests {
             prefix,
             None,
         ));
-        let signed_msg = unwrap!(SignedRoutingMessage::new(msg, src_section));
+        let signed_msg = SignedRoutingMessage::new(msg, src_section, None);
 
         // Try to add a signature which will not correspond to an ID from the sending nodes.
         let _irrelevant_sig = match signed_msg

@@ -107,14 +107,12 @@ impl SignatureAccumulator {
 mod tests {
     use super::*;
     use crate::{
-        chain::SectionInfo,
-        id::{FullId, PublicId},
-        messages::{
-            DirectMessage, MessageContent, RoutingMessage, SignedDirectMessage,
-            SignedRoutingMessage,
-        },
-        routing_table::{Authority, Prefix},
+        chain::delivery_group_size,
+        id::FullId,
+        messages::{DirectMessage, MessageContent, RoutingMessage, SignedDirectMessage},
+        routing_table::Authority,
         types::MessageId,
+        BlsPublicKeySet, BlsPublicKeyShare,
     };
     use itertools::Itertools;
     use rand;
@@ -122,16 +120,12 @@ mod tests {
     use unwrap::unwrap;
 
     struct MessageAndSignatures {
-        signed_msg: SignedRoutingMessage,
+        routing_msg: RoutingMessage,
         signature_msgs: Vec<SignedDirectMessage>,
     }
 
     impl MessageAndSignatures {
-        fn new<'a, I>(
-            msg_sender_id: &FullId,
-            other_ids: I,
-            all_ids: BTreeSet<PublicId>,
-        ) -> MessageAndSignatures
+        fn new<'a, I>(other_ids: I) -> MessageAndSignatures
         where
             I: Iterator<Item = &'a FullId>,
         {
@@ -142,32 +136,25 @@ mod tests {
                     message_id: MessageId::new(),
                 },
             };
-            let prefix = Prefix::new(0, *unwrap!(all_ids.iter().next()).name());
-            let sec_info = unwrap!(SectionInfo::new(all_ids, prefix, None));
-            let signed_msg = unwrap!(SignedRoutingMessage::new(
-                routing_msg.clone(),
-                sec_info.clone()
-            ));
             let signature_msgs = other_ids
-                .map(|_id| {
+                .map(|id| {
+                    let sig = unwrap!(routing_msg.to_signature(id.signing_private_key()));
                     unwrap!(SignedDirectMessage::new(
-                        DirectMessage::MessageSignature(unwrap!(SignedRoutingMessage::new(
-                            routing_msg.clone(),
-                            sec_info.clone(),
-                        ))),
-                        msg_sender_id,
+                        DirectMessage::MessageSignature(routing_msg.clone(), sig),
+                        id,
                     ))
                 })
                 .collect();
 
             MessageAndSignatures {
-                signed_msg,
+                routing_msg,
                 signature_msgs,
             }
         }
     }
 
     struct Env {
+        pk_set: BlsPublicKeySet,
         msgs_and_sigs: Vec<MessageAndSignatures>,
     }
 
@@ -184,11 +171,10 @@ mod tests {
                 other_ids.push(full_id);
             }
             let msgs_and_sigs = (0..5)
-                .map(|_| {
-                    MessageAndSignatures::new(&msg_sender_id, other_ids.iter(), pub_ids.clone())
-                })
+                .map(|_| MessageAndSignatures::new(other_ids.iter()))
                 .collect();
             Env {
+                pk_set: BlsPublicKeySet::new(delivery_group_size(pub_ids.len()) - 1, pub_ids),
                 msgs_and_sigs: msgs_and_sigs,
             }
         }
@@ -201,34 +187,33 @@ mod tests {
         let mut sig_accumulator = SignatureAccumulator::default();
         let env = Env::new();
 
-        // Add each message with the section list added - none should accumulate.
-        env.msgs_and_sigs.iter().foreach(|msg_and_sigs| {
-            let signed_msg = msg_and_sigs.signed_msg.clone();
-            let result = sig_accumulator.add_proof(signed_msg);
-            assert!(result.is_none());
-        });
-        let expected_msgs_count = env.msgs_and_sigs.len();
-        assert_eq!(sig_accumulator.msgs.len(), expected_msgs_count);
-
         // Add each message's signatures - each should accumulate once quorum has been reached.
         env.msgs_and_sigs.iter().foreach(|msg_and_sigs| {
+            let mut accumulated = false;
             msg_and_sigs.signature_msgs.iter().foreach(|signature_msg| {
                 let old_num_msgs = sig_accumulator.msgs.len();
 
                 let result = match signature_msg.content() {
-                    DirectMessage::MessageSignature(msg) => sig_accumulator.add_proof(msg.clone()),
+                    DirectMessage::MessageSignature(msg, sig) => sig_accumulator.add_proof(
+                        &msg,
+                        BlsPublicKeyShare(*signature_msg.src_id()),
+                        sig.clone(),
+                        &env.pk_set,
+                    ),
                     ref unexpected_msg => panic!("Unexpected message: {:?}", unexpected_msg),
                 };
 
-                if let Some(returned_msg) = result {
+                if let Some(returned_sig) = result {
+                    accumulated = true;
                     assert_eq!(sig_accumulator.msgs.len(), old_num_msgs - 1);
-                    assert_eq!(
-                        msg_and_sigs.signed_msg.routing_message(),
-                        returned_msg.routing_message()
-                    );
-                    unwrap!(returned_msg.check_integrity());
+                    let serialised_msg = unwrap!(serialise(&msg_and_sigs.routing_msg));
+                    assert!(env
+                        .pk_set
+                        .public_key()
+                        .verify(&returned_sig, serialised_msg));
                 }
             });
+            assert!(accumulated);
         });
 
         FakeClock::advance_time(ACCUMULATION_TIMEOUT.as_secs() * 1000 + 1000);

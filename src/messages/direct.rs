@@ -226,6 +226,11 @@ impl SignedDirectMessage {
     pub fn content(&self) -> &DirectMessage {
         &self.content
     }
+
+    #[cfg(test)]
+    pub fn src_id(&self) -> &PublicId {
+        &self.src_id
+    }
 }
 
 impl Debug for SignedDirectMessage {
