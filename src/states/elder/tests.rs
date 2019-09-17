@@ -24,7 +24,7 @@ use crate::{
     xor_name::XOR_NAME_LEN,
     NetworkConfig, NetworkService,
 };
-use std::net::SocketAddr;
+use std::{iter, net::SocketAddr};
 use unwrap::unwrap;
 use utils::LogIdent;
 
@@ -237,6 +237,19 @@ impl ElderUnderTest {
         let _ = self.n_vote_for_gossipped(
             NOT_ACCUMULATE_ALONE_VOTE_COUNT,
             &[&NetworkEvent::RemoveElder(offline_payload)],
+        );
+    }
+
+    fn get_participants(&self) -> BTreeSet<PublicId> {
+        iter::once(*self.full_id.public_id())
+            .chain(self.other_full_ids.iter().map(|f_id| *f_id.public_id()))
+            .collect()
+    }
+
+    fn accumulate_start_dkg(&mut self, participants: BTreeSet<PublicId>) {
+        let _ = self.n_vote_for_gossipped(
+            ACCUMULATE_VOTE_COUNT,
+            &[&NetworkEvent::StartDkg(participants)],
         );
     }
 
@@ -612,11 +625,15 @@ fn accumulate_online_candidate_only_do_not_remove_candidate() {
 
 #[test]
 // Candidate is only removed as candidate when its SectionInfo is consensused
-// Vote for `Online` trigger immediate vote for AddElder
+// Vote for `Online`, trigger DKG vote and then immediate vote for AddElder
 fn accumulate_online_candidate_then_add_elder_only_do_not_remove_candidate() {
     let mut elder_test = ElderUnderTest::new();
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
 
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
 
@@ -631,6 +648,11 @@ fn accumulate_online_candidate_then_add_elder_then_section_info_remove_candidate
     let mut elder_test = ElderUnderTest::new();
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
 
     let new_section_info = elder_test.new_section_info_with_candidate();
@@ -648,6 +670,10 @@ fn accumulate_online_then_purge_then_add_elder_for_candidate() {
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
 
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_purge_candidate(elder_test.purge_payload());
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
 
@@ -662,6 +688,11 @@ fn accumulate_online_then_purge_then_add_elder_then_section_info_for_candidate()
     let mut elder_test = ElderUnderTest::new();
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_purge_candidate(elder_test.purge_payload());
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
 
@@ -710,9 +741,18 @@ fn accumulate_offline_then_remove_elder_for_node() {
     let mut elder_test = ElderUnderTest::new();
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
     elder_test.accumulate_section_info_if_vote(elder_test.new_section_info_with_candidate());
     elder_test.accumulate_offline(elder_test.offline_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.remove(&elder_test.offline_payload());
+    elder_test.accumulate_start_dkg(participants);
 
     elder_test.accumulate_remove_elder_if_vote(elder_test.offline_payload());
 
@@ -727,9 +767,19 @@ fn accumulate_offline_then_remove_elder_then_section_info_for_node() {
     let mut elder_test = ElderUnderTest::new();
     elder_test.accumulate_expect_candidate(elder_test.expect_candidate_payload());
     elder_test.accumulate_online(elder_test.online_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.insert(elder_test.online_payload().new_public_id);
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_add_elder_if_vote(elder_test.online_payload());
     elder_test.accumulate_section_info_if_vote(elder_test.new_section_info_with_candidate());
     elder_test.accumulate_offline(elder_test.offline_payload());
+
+    let mut participants = elder_test.get_participants();
+    let _ = participants.remove(&elder_test.offline_payload());
+    elder_test.accumulate_start_dkg(participants);
+
     elder_test.accumulate_remove_elder_if_vote(elder_test.offline_payload());
 
     elder_test.accumulate_section_info_if_vote(elder_test.new_section_info_without_candidate());
