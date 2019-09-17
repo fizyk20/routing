@@ -15,7 +15,10 @@ use crate::types::MessageId;
 use crate::{Authority, RoutingError, XorName};
 use hex_fmt::HexFmt;
 use maidsafe_utilities::serialisation::serialise;
-use std::fmt::{self, Debug, Formatter};
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Debug, Formatter},
+};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct ExpectCandidatePayload {
@@ -64,6 +67,9 @@ pub enum NetworkEvent {
     AddElder(PublicId, Authority<XorName>),
     /// Remove elder once we agreed to remove the peer
     RemoveElder(PublicId),
+
+    /// Vote to start a DKG instance
+    StartDkg(BTreeSet<PublicId>),
 
     /// Voted for candidate that pass resource proof
     Online(OnlinePayload),
@@ -118,6 +124,7 @@ impl NetworkEvent {
                 peer_id: id,
                 related_info: Default::default(),
             },
+            NetworkEvent::StartDkg(participants) => parsec::Observation::StartDkg(participants),
             event => parsec::Observation::OpaquePayload(event),
         })
     }
@@ -130,6 +137,9 @@ impl Debug for NetworkEvent {
         match self {
             NetworkEvent::AddElder(ref id, _) => write!(formatter, "AddElder({}, _)", id),
             NetworkEvent::RemoveElder(ref id) => write!(formatter, "RemoveElder({})", id),
+            NetworkEvent::StartDkg(ref participants) => {
+                write!(formatter, "StartDkg({:?})", participants)
+            }
             NetworkEvent::Online(ref payload) => write!(
                 formatter,
                 "Online(new:{}, old:{})",

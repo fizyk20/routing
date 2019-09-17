@@ -92,6 +92,12 @@ pub struct ElderDetails {
     pub timer: Timer,
 }
 
+enum ChurnEvent {
+    None,
+    Add(OnlinePayload),
+    Remove(PublicId),
+}
+
 pub struct Elder {
     network_service: NetworkService,
     full_id: FullId,
@@ -131,6 +137,8 @@ pub struct Elder {
     #[cfg(feature = "mock_base")]
     ignore_candidate_info_counter: u8,
     pfx_is_successfully_polled: bool,
+    /// The churn event in progress, for which a DKG instance is running
+    churn_in_progress: ChurnEvent,
 }
 
 impl Elder {
@@ -226,6 +234,7 @@ impl Elder {
             #[cfg(feature = "mock_base")]
             ignore_candidate_info_counter: 0,
             pfx_is_successfully_polled: false,
+            churn_in_progress: ChurnEvent::None,
         }
     }
 
@@ -419,6 +428,7 @@ impl Elder {
                 // flight as well.
                 NetworkEvent::AddElder(_, _)
                 | NetworkEvent::RemoveElder(_)
+                | NetworkEvent::StartDkg(_)
                 | NetworkEvent::Online(_)
                 | NetworkEvent::ExpectCandidate(_)
                 | NetworkEvent::PurgeCandidate(_) => false,
@@ -1980,23 +1990,43 @@ impl Approved for Elder {
         _participants: &BTreeSet<PublicId>,
         _dkg_result: &DkgResultWrapper,
     ) -> Result<(), RoutingError> {
-        // TODO
+        match mem::replace(&mut self.churn_in_progress, ChurnEvent::None) {
+            ChurnEvent::None => {
+                log_or_panic!(
+                    LogLevel::Error,
+                    "{} Got a DKG result, but no churn event was cached!",
+                    self
+                );
+            }
+            ChurnEvent::Add(payload) => {
+                self.vote_for_event(NetworkEvent::AddElder(
+                    payload.new_public_id,
+                    payload.client_auth,
+                ));
+            }
+            ChurnEvent::Remove(pub_id) => {
+                self.vote_for_event(NetworkEvent::RemoveElder(pub_id));
+            }
+        }
         Ok(())
     }
 
     fn handle_online_event(&mut self, online_payload: OnlinePayload) -> Result<(), RoutingError> {
         if self.chain.try_accept_candidate_as_member(&online_payload) {
             self.peer_mgr.reset_candidate();
-            self.vote_for_event(NetworkEvent::AddElder(
-                online_payload.new_public_id,
-                online_payload.client_auth,
-            ));
+            let mut participants = self.chain.new_info_members();
+            let _ = participants.insert(online_payload.new_public_id);
+            self.vote_for_event(NetworkEvent::StartDkg(participants));
+            self.churn_in_progress = ChurnEvent::Add(online_payload);
         }
         Ok(())
     }
 
     fn handle_offline_event(&mut self, pub_id: PublicId) -> Result<(), RoutingError> {
-        self.vote_for_event(NetworkEvent::RemoveElder(pub_id));
+        let mut participants = self.chain.new_info_members();
+        let _ = participants.remove(&pub_id);
+        self.vote_for_event(NetworkEvent::StartDkg(participants));
+        self.churn_in_progress = ChurnEvent::Remove(pub_id);
         Ok(())
     }
 

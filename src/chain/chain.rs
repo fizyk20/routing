@@ -259,6 +259,7 @@ impl Chain {
             }
             NetworkEvent::AddElder(_, _)
             | NetworkEvent::RemoveElder(_)
+            | NetworkEvent::StartDkg(_)
             | NetworkEvent::Online(_)
             | NetworkEvent::Offline(_)
             | NetworkEvent::ExpectCandidate(_)
@@ -420,6 +421,11 @@ impl Chain {
     /// Returns our own current section info.
     pub fn our_info(&self) -> &SectionInfo {
         self.state.our_info()
+    }
+
+    /// Returns the members of the new_info SectionInfo
+    pub fn new_info_members(&self) -> BTreeSet<PublicId> {
+        self.state.new_info.members().clone()
     }
 
     /// Returns our own current section's prefix.
@@ -612,6 +618,13 @@ impl Chain {
             | NetworkEvent::TheirKeyInfo(_)
             | NetworkEvent::AckMessage(_) => {
                 self.state.change == PrefixChange::None && self.our_info().is_quorum(proofs)
+            }
+            NetworkEvent::StartDkg(_) => {
+                log_or_panic!(
+                    LogLevel::Error,
+                    "StartDkg present in the chain accumulator - should never happen!"
+                );
+                false
             }
             NetworkEvent::SendAckMessage(_) => {
                 // We may not reach consensus if malicious peer, but when we do we know all our

@@ -234,6 +234,12 @@ pub trait Approved: Relocated {
                 NetworkEvent::RemoveElder(pub_id) => {
                     self.handle_remove_elder_event(pub_id, outbox)?;
                 }
+                NetworkEvent::StartDkg(_) => {
+                    log_or_panic!(
+                        LogLevel::Error,
+                        "StartDkg came out of Parsec - this shouldn't happen"
+                    );
+                }
                 NetworkEvent::Online(info) => {
                     self.handle_online_event(info)?;
                 }
