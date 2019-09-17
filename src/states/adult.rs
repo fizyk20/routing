@@ -24,7 +24,7 @@ use crate::{
     id::{FullId, PublicId},
     messages::{DirectMessage, HopMessage, RoutingMessage},
     outbox::EventBox,
-    parsec::ParsecMap,
+    parsec::{DkgResultWrapper, ParsecMap},
     peer_manager::PeerManager,
     peer_map::PeerMap,
     routing_message_filter::RoutingMessageFilter,
@@ -36,7 +36,10 @@ use crate::{
     NetworkService,
 };
 use itertools::Itertools;
-use std::fmt::{self, Display, Formatter};
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Display, Formatter},
+};
 
 const POKE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -367,6 +370,15 @@ impl Approved for Adult {
         _: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
         let _ = self.chain.remove_member(pub_id)?;
+        Ok(())
+    }
+
+    fn handle_dkg_result_event(
+        &mut self,
+        _participants: &BTreeSet<PublicId>,
+        _dkg_result: &DkgResultWrapper,
+    ) -> Result<(), RoutingError> {
+        // TODO
         Ok(())
     }
 

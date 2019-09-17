@@ -31,6 +31,7 @@ pub type Block = inner::Block<chain::NetworkEvent, id::PublicId>;
 pub type Parsec = inner::Parsec<chain::NetworkEvent, FullId>;
 pub type Request = inner::Request<chain::NetworkEvent, id::PublicId>;
 pub type Response = inner::Response<chain::NetworkEvent, id::PublicId>;
+pub use inner::DkgResultWrapper;
 
 pub struct ParsecMap {
     map: BTreeMap<u64, Parsec>,

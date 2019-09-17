@@ -15,7 +15,7 @@ use crate::{
     error::RoutingError,
     id::PublicId,
     outbox::EventBox,
-    parsec::{self, Block, Observation, ParsecMap},
+    parsec::{self, Block, DkgResultWrapper, Observation, ParsecMap},
     routing_table::Prefix,
     state_machine::Transition,
     xor_name::XorName,
@@ -23,6 +23,7 @@ use crate::{
 };
 use log::LogLevel;
 use maidsafe_utilities::serialisation;
+use std::collections::BTreeSet;
 
 /// Common functionality for node states post resource proof.
 pub trait Approved: Relocated {
@@ -45,6 +46,13 @@ pub trait Approved: Relocated {
         &mut self,
         pub_id: PublicId,
         outbox: &mut dyn EventBox,
+    ) -> Result<(), RoutingError>;
+
+    /// Handles a completed DKG.
+    fn handle_dkg_result_event(
+        &mut self,
+        participants: &BTreeSet<PublicId>,
+        dkg_result: &DkgResultWrapper,
     ) -> Result<(), RoutingError>;
 
     /// Handles an accumulated `Online` event.
@@ -197,7 +205,12 @@ pub trait Approved: Relocated {
                         obs
                     );
                 }
-                Observation::DkgResult { .. } => unreachable!("..."),
+                Observation::DkgResult {
+                    participants,
+                    dkg_result,
+                } => {
+                    self.handle_dkg_result_event(participants, dkg_result)?;
+                }
             }
 
             match self.chain_poll(outbox)? {

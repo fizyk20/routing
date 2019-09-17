@@ -28,7 +28,7 @@ use crate::{
         UserMessage,
     },
     outbox::EventBox,
-    parsec::{self, ParsecMap},
+    parsec::{self, DkgResultWrapper, ParsecMap},
     peer_manager::{Peer, PeerManager, PeerState},
     peer_map::PeerMap,
     quic_p2p::NodeInfo,
@@ -1972,6 +1972,15 @@ impl Approved for Elder {
             self.disconnect_peer(&pub_id);
         }
 
+        Ok(())
+    }
+
+    fn handle_dkg_result_event(
+        &mut self,
+        _participants: &BTreeSet<PublicId>,
+        _dkg_result: &DkgResultWrapper,
+    ) -> Result<(), RoutingError> {
+        // TODO
         Ok(())
     }
 
