@@ -15,8 +15,8 @@ use crate::messages::Message;
 use crate::{
     chain::{
         delivery_group_size, AccumulatingEvent, AckMessagePayload, Chain, EldersChange, EldersInfo,
-        GenesisPfxInfo, NetworkEvent, PrefixChange, PrefixChangeOutcome, SectionInfoSigPayload,
-        SectionKeyInfo, SendAckMessagePayload,
+        GenesisPfxInfo, MemberPersona, NetworkEvent, PrefixChange, PrefixChangeOutcome,
+        SectionInfoSigPayload, SectionKeyInfo, SendAckMessagePayload,
     },
     crypto::Digest256,
     error::{BootstrapResponseError, InterfaceError, RoutingError},
@@ -40,7 +40,7 @@ use crate::{
     timer::Timer,
     utils::{self, XorTargetInterval},
     xor_name::XorName,
-    BlsPublicKeySet, NetworkService,
+    BlsPublicKeySet, NetworkService, ELDER_SIZE, SAFE_SECTION_SIZE,
 };
 use itertools::Itertools;
 use log::LogLevel;
@@ -367,7 +367,7 @@ impl Elder {
                 // flight as well.
                 AccumulatingEvent::AddElder(_)
                 | AccumulatingEvent::RemoveElder(_)
-                | AccumulatingEvent::Online(_)
+                | AccumulatingEvent::Online(_, _)
                 | AccumulatingEvent::ParsecPrune => false,
 
                 // Keep: Additional signatures for neighbours for sec-msg-relay.
@@ -707,7 +707,34 @@ impl Elder {
             return;
         }
 
-        self.vote_for_event(AccumulatingEvent::Online(pub_id));
+        if self.chain.is_peer_relocated(&pub_id) {
+            // TODO: reject the node; can't happen until relocation is implemented
+        } else if self.chain.has_peer_left(&pub_id) {
+            self.accept_or_relocate(pub_id);
+        } else {
+            // We don't know this node - let it join
+            self.vote_for_event(AccumulatingEvent::Online(pub_id, MemberPersona::Adult));
+        }
+    }
+
+    fn accept_or_relocate(&mut self, pub_id: PublicId) {
+        // TODO: Add the relocation option when it's implemented; for now just accept
+        if let Some(target_persona) = self.target_persona_for_new_node() {
+            self.vote_for_event(AccumulatingEvent::Online(pub_id, target_persona));
+        } else {
+            // TODO: tell the node to wait
+        }
+    }
+
+    fn target_persona_for_new_node(&self) -> Option<MemberPersona> {
+        let members_count = self.chain.our_members().count();
+        if members_count < ELDER_SIZE {
+            Some(MemberPersona::Elder)
+        } else if members_count < SAFE_SECTION_SIZE || self.chain.our_infants().count() < 2 {
+            Some(MemberPersona::Infant)
+        } else {
+            None
+        }
     }
 
     fn update_our_knowledge(&mut self, signed_msg: &SignedRoutingMessage) {
@@ -1274,16 +1301,24 @@ impl Approved for Elder {
     fn handle_online_event(
         &mut self,
         pub_id: PublicId,
+        persona: MemberPersona,
         outbox: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
         info!("{} - handle Online: {}.", self, pub_id);
 
-        self.chain.add_member(pub_id);
+        let init_persona = if persona == MemberPersona::Elder {
+            MemberPersona::Adult
+        } else {
+            persona
+        };
+        self.chain.add_member(pub_id, init_persona);
         self.handle_candidate_approval(pub_id, outbox);
 
         // TODO: vote for StartDkg and only when that gets consensused, vote for AddElder.
 
-        self.vote_for_event(AccumulatingEvent::AddElder(pub_id));
+        if persona == MemberPersona::Elder {
+            self.vote_for_event(AccumulatingEvent::AddElder(pub_id));
+        }
 
         Ok(())
     }

@@ -6,7 +6,7 @@
 // KIND, either express or implied. Please review the Licences for the specific language governing
 // permissions and limitations relating to use of the SAFE Network Software.
 
-use super::{EldersInfo, Proof, SectionKeyInfo};
+use super::{EldersInfo, MemberPersona, Proof, SectionKeyInfo};
 use crate::crypto::Digest256;
 use crate::id::{FullId, PublicId};
 use crate::parsec;
@@ -61,7 +61,7 @@ pub enum AccumulatingEvent {
     RemoveElder(PublicId),
 
     /// Voted for candidate that pass resource proof
-    Online(PublicId),
+    Online(PublicId, MemberPersona),
     /// Voted for candidate we no longer consider online.
     Offline(PublicId),
 
@@ -116,7 +116,9 @@ impl Debug for AccumulatingEvent {
         match self {
             AccumulatingEvent::AddElder(ref id) => write!(formatter, "AddElder({})", id),
             AccumulatingEvent::RemoveElder(ref id) => write!(formatter, "RemoveElder({})", id),
-            AccumulatingEvent::Online(ref id) => write!(formatter, "Online({})", id),
+            AccumulatingEvent::Online(ref id, persona) => {
+                write!(formatter, "Online({}, {:?})", id, persona)
+            }
             AccumulatingEvent::Offline(ref id) => write!(formatter, "Offline({})", id),
             AccumulatingEvent::OurMerge => write!(formatter, "OurMerge"),
             AccumulatingEvent::NeighbourMerge(ref digest) => {

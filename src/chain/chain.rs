@@ -287,7 +287,7 @@ impl Chain {
             }
             AccumulatingEvent::AddElder(_)
             | AccumulatingEvent::RemoveElder(_)
-            | AccumulatingEvent::Online(_)
+            | AccumulatingEvent::Online(_, _)
             | AccumulatingEvent::Offline(_)
             | AccumulatingEvent::SendAckMessage(_) => (),
         }
@@ -296,7 +296,7 @@ impl Chain {
     }
 
     /// Adds a member to our section.
-    pub fn add_member(&mut self, pub_id: PublicId) {
+    pub fn add_member(&mut self, pub_id: PublicId, init_persona: MemberPersona) {
         self.assert_no_prefix_change("add member");
 
         if !self.our_prefix().matches(&pub_id.name()) {
@@ -312,7 +312,7 @@ impl Chain {
         // TODO: start as infant unless rejoining
         // TODO: support rejoining
         let info = self.state.our_members.entry(pub_id).or_default();
-        info.persona = MemberPersona::Adult;
+        info.persona = init_persona;
         info.state = MemberState::Joined;
     }
 
@@ -499,6 +499,22 @@ impl Chain {
             .unwrap_or(false)
     }
 
+    /// Checks if the given `PublicId` was a member of our section at some point, but was
+    /// relocated.
+    pub fn is_peer_relocated(&self, _: &PublicId) -> bool {
+        // TODO: perform an actual check when relocation is implemented
+        false
+    }
+
+    /// Checks if the given `PublicId` was a member of our section at some point, but has left.
+    pub fn has_peer_left(&self, pub_id: &PublicId) -> bool {
+        self.state
+            .our_members
+            .get(pub_id)
+            .map(|info| info.state == MemberState::Left)
+            .unwrap_or(false)
+    }
+
     /// Returns a set of elders we should be connected to.
     pub fn elders(&self) -> impl Iterator<Item = &PublicId> {
         self.neighbour_infos()
@@ -532,6 +548,32 @@ impl Chain {
     /// Returns elders from our own section, including ourselves.
     pub fn our_elders(&self) -> impl Iterator<Item = &PublicId> {
         self.state.our_info().members().iter()
+    }
+
+    /// Returns infants from our own section
+    pub fn our_infants(&self) -> impl Iterator<Item = &PublicId> {
+        self.state.our_members.iter().filter_map(|(pub_id, info)| {
+            if info.state == MemberState::Joined && info.persona == MemberPersona::Infant {
+                Some(pub_id)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns members from our own section, including ourselves.
+    pub fn our_members(&self) -> impl Iterator<Item = &PublicId> {
+        self.state
+            .our_members
+            .iter()
+            .filter_map(|(pub_id, info)| {
+                if info.state == MemberState::Joined {
+                    Some(pub_id)
+                } else {
+                    None
+                }
+            })
+            .chain(iter::once(&self.our_id))
     }
 
     /// Returns all neighbour elders.
@@ -674,7 +716,7 @@ impl Chain {
 
             AccumulatingEvent::AddElder(_)
             | AccumulatingEvent::RemoveElder(_)
-            | AccumulatingEvent::Online(_)
+            | AccumulatingEvent::Online(_, _)
             | AccumulatingEvent::Offline(_)
             | AccumulatingEvent::TheirKeyInfo(_)
             | AccumulatingEvent::ParsecPrune

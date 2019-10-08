@@ -24,7 +24,7 @@ impl Default for MemberInfo {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, Debug, PartialOrd, Ord)]
 pub enum MemberPersona {
     #[allow(unused)]
     Infant,

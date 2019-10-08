@@ -13,7 +13,8 @@ use super::{
 };
 use crate::{
     chain::{
-        Chain, EldersChange, EldersInfo, GenesisPfxInfo, SectionKeyInfo, SendAckMessagePayload,
+        Chain, EldersChange, EldersInfo, GenesisPfxInfo, MemberPersona, SectionKeyInfo,
+        SendAckMessagePayload,
     },
     error::{BootstrapResponseError, RoutingError},
     event::Event,
@@ -439,9 +440,15 @@ impl Approved for Adult {
     fn handle_online_event(
         &mut self,
         pub_id: PublicId,
+        persona: MemberPersona,
         _: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
-        self.chain.add_member(pub_id);
+        let init_persona = if persona == MemberPersona::Elder {
+            MemberPersona::Adult
+        } else {
+            persona
+        };
+        self.chain.add_member(pub_id, init_persona);
         Ok(())
     }
 

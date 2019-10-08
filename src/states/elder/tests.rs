@@ -15,6 +15,7 @@
 
 use super::*;
 use crate::{
+    chain::MemberPersona,
     messages::DirectMessage,
     mock::Network,
     outbox::{EventBox, EventBuf},
@@ -151,7 +152,7 @@ impl ElderUnderTest {
     fn accumulate_online(&mut self, public_id: PublicId) {
         let _ = self.n_vote_for_gossipped(
             ACCUMULATE_VOTE_COUNT,
-            iter::once(AccumulatingEvent::Online(public_id)),
+            iter::once(AccumulatingEvent::Online(public_id, MemberPersona::Elder)),
         );
     }
 
