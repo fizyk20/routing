@@ -227,12 +227,6 @@ impl SharedState {
         self.our_infos.iter().find(|info| info.hash() == hash)
     }
 
-    /// Returns our member infos.
-    #[allow(unused)]
-    pub fn our_members(&self) -> &BTreeMap<PublicId, MemberInfo> {
-        &self.our_members
-    }
-
     /// Returns an iterator over the members that have state == `Joined`.
     pub fn our_joined_members(&self) -> impl Iterator<Item = (&PublicId, &MemberInfo)> {
         self.our_members

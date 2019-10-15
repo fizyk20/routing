@@ -237,8 +237,10 @@ impl Chain {
         match event {
             AccumulatingEvent::SectionInfo(ref info)
             | AccumulatingEvent::NeighbourInfo(ref info) => {
+                let old_own: BTreeSet<_> = self.our_info().members();
                 let old_neighbours: BTreeSet<_> = self.neighbour_elders_p2p().cloned().collect();
                 self.add_elders_info(info.clone(), proofs)?;
+                let new_own = self.our_info().members();
                 let new_neighbours: BTreeSet<_> = self.neighbour_elders_p2p().cloned().collect();
 
                 if let Some((ref cached_info, _)) = self.state.split_cache {
@@ -248,11 +250,13 @@ impl Chain {
                 }
 
                 let neighbour_change = EldersChange {
-                    added: new_neighbours
+                    own_added: new_own.difference(&old_own).cloned().collect(),
+                    own_removed: old_own.difference(&new_own).cloned().collect(),
+                    neighbour_added: new_neighbours
                         .difference(&old_neighbours)
                         .cloned()
                         .collect(),
-                    removed: old_neighbours
+                    neighbour_removed: old_neighbours
                         .difference(&new_neighbours)
                         .cloned()
                         .collect(),
@@ -390,80 +394,47 @@ impl Chain {
         }
     }
 
-    /// Adds an elder to our section, creating a new `EldersInfo` in the process.
-    /// If we need to split also returns an additional sibling `EldersInfo`.
-    /// Should not be called while a pfx change is in progress.
-    pub fn add_elder(&mut self, pub_id: PublicId) -> Result<Vec<EldersInfo>, RoutingError> {
-        self.assert_no_prefix_change("add elder");
-
-        if !self.our_prefix().matches(&pub_id.name()) {
-            log_or_panic!(
-                LogLevel::Error,
-                "{} - Adding elder {} whose name does not match our prefix {:?}.",
-                self,
-                pub_id,
-                self.our_prefix()
-            );
-        }
-
-        // We already have the connection info from when it was added online.
-        let connection_info = self
-            .get_member_connection_info(&pub_id)
-            .ok_or(RoutingError::PeerNotFound(pub_id))?;
-
-        let mut elders_p2p = self.state.new_info.p2p_members().clone();
-        let _ = elders_p2p.insert(P2pNode::new(pub_id, connection_info.clone()));
+    /// Generate a new section info based on the current set of members.
+    /// Returns a set of EldersInfos to vote for.
+    pub fn promote_and_demote_elders(&mut self) -> Result<Vec<EldersInfo>, RoutingError> {
+        self.assert_no_prefix_change("promote and demote");
 
         // TODO: the split decision should be based on the number of all members, not just elders.
-        if self.should_split(&elders_p2p)? {
-            let (our_info, other_info) = self.split_self(elders_p2p.clone())?;
+        if self.should_split()? {
+            let (our_info, other_info) = self.split_self()?;
             self.state.change = PrefixChange::Splitting;
             return Ok(vec![our_info, other_info]);
         }
 
-        self.state.new_info = EldersInfo::new(
-            elders_p2p,
-            *self.state.new_info.prefix(),
-            Some(&self.state.new_info),
-        )?;
+        let expected_elders_p2p = self.expected_elders_p2p();
+        let current_elders_p2p = self.state.new_info.p2p_members();
 
-        Ok(vec![self.state.new_info.clone()])
-    }
+        if &expected_elders_p2p != current_elders_p2p {
+            let old_size = self.state.new_info.members().len();
 
-    /// Removes an elder from our section, creating a new `our_info` in the process.
-    /// Should not be called while a pfx change is in progress.
-    pub fn remove_elder(&mut self, pub_id: PublicId) -> Result<EldersInfo, RoutingError> {
-        self.assert_no_prefix_change("remove elder");
+            self.state.new_info = EldersInfo::new(
+                expected_elders_p2p,
+                *self.state.new_info.prefix(),
+                Some(&self.state.new_info),
+            )?;
 
-        let mut elders = self.state.new_info.p2p_members().clone();
-        let connection_info = self
-            .get_member_connection_info(&pub_id)
-            .ok_or(RoutingError::PeerNotFound(pub_id))?;
-        let p2p_node = P2pNode::new(pub_id, connection_info.clone());
-        let _ = elders.remove(&p2p_node);
+            if self.state.new_info.members().len() < self.elder_size()
+                && old_size >= self.elder_size()
+            {
+                // set to merge state to prevent extending chain any further.
+                // We'd still not Vote for OurMerge until we've updated our_infos
+                self.state.change = PrefixChange::Merging;
+                panic!(
+                    "Merge not supported: remove_member < min_sec_size {:?}: {:?}",
+                    self.our_id(),
+                    self.state.new_info
+                );
+            }
 
-        if self.our_id() == &pub_id {
-            self.is_elder = false;
+            Ok(vec![self.state.new_info.clone()])
+        } else {
+            Ok(vec![])
         }
-
-        self.state.new_info = EldersInfo::new(
-            elders,
-            *self.state.new_info.prefix(),
-            Some(&self.state.new_info),
-        )?;
-
-        if self.state.new_info.members().len() < self.elder_size() {
-            // set to merge state to prevent extending chain any further.
-            // We'd still not Vote for OurMerge until we've updated our_infos
-            self.state.change = PrefixChange::Merging;
-            panic!(
-                "Merge not supported: remove_member < min_sec_size {:?}: {:?}",
-                self.our_id(),
-                self.state.new_info
-            );
-        }
-
-        Ok(self.state.new_info.clone())
     }
 
     /// Returns the next section info if both we and our sibling have signalled for merging.
@@ -596,6 +567,19 @@ impl Chain {
     // WIP: consider removing me
     pub fn elders(&self) -> impl Iterator<Item = &PublicId> {
         self.elders_p2p().map(P2pNode::public_id)
+    }
+
+    fn expected_elders_p2p(&self) -> BTreeSet<P2pNode> {
+        self.state
+            .our_joined_members()
+            .sorted_by(|&(_, info1), &(_, info2)| Ord::cmp(&info2.age_counter, &info1.age_counter))
+            .into_iter()
+            .filter_map(|(pub_id, _)| {
+                self.get_member_connection_info(pub_id)
+                    .map(|conn_info| P2pNode::new(*pub_id, conn_info.clone()))
+            })
+            .take(self.elder_size())
+            .collect()
     }
 
     /// Checks if given `PublicId` is an elder in our section or one of our neighbour sections.
@@ -966,7 +950,9 @@ impl Chain {
     }
 
     /// Returns whether we should split into two sections.
-    fn should_split(&self, members: &BTreeSet<P2pNode>) -> Result<bool, RoutingError> {
+    fn should_split(&self) -> Result<bool, RoutingError> {
+        let members = self.expected_elders_p2p();
+
         if self.state.change != PrefixChange::None || self.should_vote_for_merge() {
             return Ok(false);
         }
@@ -986,10 +972,9 @@ impl Chain {
     }
 
     /// Splits our section and generates new section infos for the child sections.
-    fn split_self(
-        &mut self,
-        members: BTreeSet<P2pNode>,
-    ) -> Result<(EldersInfo, EldersInfo), RoutingError> {
+    fn split_self(&mut self) -> Result<(EldersInfo, EldersInfo), RoutingError> {
+        let members = self.expected_elders_p2p();
+
         let next_bit = self.our_id.name().bit(self.our_prefix().bit_count());
 
         let our_prefix = self.our_prefix().pushed(next_bit);
@@ -1443,10 +1428,14 @@ impl Chain {
 // Change to section elders.
 #[derive(Default)]
 pub struct EldersChange {
-    // Peers that became elders.
-    pub added: BTreeSet<P2pNode>,
-    // Peers that ceased to be elders.
-    pub removed: BTreeSet<P2pNode>,
+    // Peers that became elders in our section
+    pub own_added: BTreeSet<PublicId>,
+    // Peers that ceased to be elders in our section
+    pub own_removed: BTreeSet<PublicId>,
+    // Peers that became elders in neighouring sections.
+    pub neighbour_added: BTreeSet<P2pNode>,
+    // Peers that ceased to be elders in neighouring sections.
+    pub neighbour_removed: BTreeSet<P2pNode>,
 }
 
 #[cfg(test)]

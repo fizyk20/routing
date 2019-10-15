@@ -440,7 +440,7 @@ impl Approved for Adult {
     fn handle_online_event(
         &mut self,
         payload: OnlinePayload,
-        outbox: &mut dyn EventBox,
+        _outbox: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
         let pub_id = *payload.p2p_node.public_id();
 
@@ -452,10 +452,10 @@ impl Approved for Adult {
         info!("{} - handle Online: {:?}.", self, payload);
         self.chain.add_member(payload.p2p_node, payload.age);
 
-        // Simulate handling AddElder as well
-        info!("{} - handle AddElder: {}.", self, pub_id);
-        let _ = self.chain.add_elder(pub_id)?;
-        self.send_event(Event::NodeAdded(*pub_id.name()), outbox);
+        let _ = self.chain.promote_and_demote_elders()?;
+
+        // FIXME: send appropriate events
+        // self.send_event(Event::NodeAdded(*pub_id.name()), outbox);
 
         // If the elder being added is us, start sending parsec gossips.
         if pub_id == *self.id() {
@@ -468,15 +468,15 @@ impl Approved for Adult {
     fn handle_offline_event(
         &mut self,
         pub_id: PublicId,
-        outbox: &mut dyn EventBox,
+        _outbox: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
         info!("{} - handle Offline: {}.", self, pub_id);
         self.chain.remove_member(&pub_id);
 
-        info!("{} - handle RemoveElder: {}.", self, pub_id);
-        let _ = self.chain.remove_elder(pub_id)?;
-        self.disconnect(&pub_id);
-        self.send_event(Event::NodeLost(*pub_id.name()), outbox);
+        let _ = self.chain.promote_and_demote_elders()?;
+
+        // FIXME: send appropriate events
+        // self.send_event(Event::NodeLost(*pub_id.name()), outbox);
         Ok(())
     }
 

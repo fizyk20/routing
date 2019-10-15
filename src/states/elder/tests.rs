@@ -390,7 +390,7 @@ fn when_accumulate_online_then_node_is_added_to_our_members() {
 
     assert!(!elder_test.has_unpolled_observations());
     assert!(elder_test.is_candidate_member());
-    assert!(elder_test.is_candidate_elder());
+    assert!(!elder_test.is_candidate_elder());
     assert!(!elder_test.is_candidate_in_our_elders_info());
 }
 

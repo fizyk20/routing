@@ -293,8 +293,10 @@ impl Elder {
 
         // Handle the SectionInfo event which triggered us becoming established node.
         let neighbour_change = EldersChange {
-            added: self.chain.neighbour_elders_p2p().cloned().collect(),
-            removed: Default::default(),
+            own_added: Default::default(),
+            own_removed: Default::default(),
+            neighbour_added: self.chain.neighbour_elders_p2p().cloned().collect(),
+            neighbour_removed: Default::default(),
         };
         let _ = self.handle_section_info_event(elders_info, old_pfx, neighbour_change, outbox)?;
 
@@ -348,7 +350,7 @@ impl Elder {
     // longer members of our section or elders of neighbour sections.
     fn update_neighbour_connections(&mut self, change: EldersChange, _outbox: &mut dyn EventBox) {
         if self.chain.prefix_change() == PrefixChange::None {
-            for p2p_node in change.removed {
+            for p2p_node in change.neighbour_removed {
                 // The peer might have been relocated from a neighbour to us - in that case do not
                 // disconnect from them.
                 if self.chain.is_peer_our_member(p2p_node.public_id()) {
@@ -359,7 +361,7 @@ impl Elder {
             }
         }
 
-        for p2p_node in change.added {
+        for p2p_node in change.neighbour_added {
             let pub_id = *p2p_node.public_id();
             if !self.peer_map.has(&pub_id) {
                 self.peer_map
@@ -1122,7 +1124,7 @@ impl Elder {
         &mut self,
         pub_id: PublicId,
         disconnect_time: DisconnectTime,
-        outbox: &mut dyn EventBox,
+        _outbox: &mut dyn EventBox,
     ) -> Result<(), RoutingError> {
         self.chain.remove_member(&pub_id);
 
@@ -1136,16 +1138,15 @@ impl Elder {
             }
         }
 
-        // Temporarily behave as if RemoveElder accumulated simultaneously
-        info!("{} - handle RemoveElder: {}.", self, pub_id);
-
-        let self_info = self.chain.remove_elder(pub_id)?;
+        let mut self_infos = self.chain.promote_and_demote_elders()?;
+        assert!(self_infos.len() == 1);
+        let self_info = self_infos
+            .pop()
+            .expect("should contain exactly one EldersInfo");
 
         let participants = self_info.members();
         let _ = self.dkg_cache.insert(participants.clone(), self_info);
         self.vote_for_event(AccumulatingEvent::StartDkg(participants));
-
-        self.send_event(Event::NodeLost(*pub_id.name()), outbox);
 
         Ok(())
     }
@@ -1510,18 +1511,7 @@ impl Approved for Elder {
         self.chain.add_member(payload.p2p_node.clone(), payload.age);
         self.handle_candidate_approval(payload.p2p_node.clone(), outbox);
 
-        // TODO: vote for StartDkg and only when that gets consensused, vote for AddElder.
-
-        // pretend as if AddElder accumulated already
-        let pub_id = *payload.p2p_node.public_id();
-        info!("{} - handle AddElder: {}.", self, pub_id);
-
-        let to_vote_infos = self.chain.add_elder(pub_id)?;
-
-        self.send_event(Event::NodeAdded(*pub_id.name()), outbox);
-        self.print_rt_size();
-
-        for info in to_vote_infos {
+        for info in self.chain.promote_and_demote_elders()? {
             let participants = info.members();
             let _ = self.dkg_cache.insert(participants.clone(), info);
             self.vote_for_event(AccumulatingEvent::StartDkg(participants));
@@ -1571,7 +1561,7 @@ impl Approved for Elder {
         &mut self,
         elders_info: EldersInfo,
         old_pfx: Prefix<XorName>,
-        neighbour_change: EldersChange,
+        elders_change: EldersChange,
         outbox: &mut dyn EventBox,
     ) -> Result<Transition, RoutingError> {
         info!("{} - handle SectionInfo: {:?}.", self, elders_info);
@@ -1594,7 +1584,15 @@ impl Approved for Elder {
             self.reset_parsec()?;
         }
 
-        self.update_neighbour_connections(neighbour_change, outbox);
+        for pub_id in &elders_change.own_added {
+            self.send_event(Event::NodeAdded(*pub_id.name()), outbox);
+        }
+
+        for pub_id in &elders_change.own_removed {
+            self.send_event(Event::NodeLost(*pub_id.name()), outbox);
+        }
+
+        self.update_neighbour_connections(elders_change, outbox);
 
         if self_sec_update {
             // Vote to update our self messages proof
@@ -1607,6 +1605,8 @@ impl Approved for Elder {
         }
 
         let _ = self.merge_if_necessary();
+
+        self.print_rt_size();
 
         Ok(Transition::Stay)
     }
