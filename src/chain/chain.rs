@@ -563,6 +563,13 @@ impl Chain {
             .chain(self.state.new_info.p2p_members())
     }
 
+    fn elders_and_adults(&self) -> impl Iterator<Item = &PublicId> {
+        self.state
+            .our_joined_members()
+            .filter(|(_, info)| info.is_mature())
+            .map(|(pub_id, _)| pub_id)
+    }
+
     /// Returns a set of elders we should be connected to.
     // WIP: consider removing me
     pub fn elders(&self) -> impl Iterator<Item = &PublicId> {
@@ -572,6 +579,20 @@ impl Chain {
     fn expected_elders_p2p(&self) -> BTreeSet<P2pNode> {
         self.state
             .our_joined_members()
+            .sorted_by(|&(_, info1), &(_, info2)| Ord::cmp(&info2.age_counter, &info1.age_counter))
+            .into_iter()
+            .filter_map(|(pub_id, _)| {
+                self.get_member_connection_info(pub_id)
+                    .map(|conn_info| P2pNode::new(*pub_id, conn_info.clone()))
+            })
+            .take(self.elder_size())
+            .collect()
+    }
+
+    fn eldest_members_matching_prefix(&self, prefix: &Prefix<XorName>) -> BTreeSet<P2pNode> {
+        self.state
+            .our_joined_members()
+            .filter(|(pub_id, _)| prefix.matches(pub_id.name()))
             .sorted_by(|&(_, info1), &(_, info2)| Ord::cmp(&info2.age_counter, &info1.age_counter))
             .into_iter()
             .filter_map(|(pub_id, _)| {
@@ -951,38 +972,31 @@ impl Chain {
 
     /// Returns whether we should split into two sections.
     fn should_split(&self) -> Result<bool, RoutingError> {
-        let members = self.expected_elders_p2p();
-
         if self.state.change != PrefixChange::None || self.should_vote_for_merge() {
             return Ok(false);
         }
 
-        let new_size = members
-            .iter()
-            .filter(|p2p_node| {
-                self.our_id
-                    .name()
-                    .common_prefix(p2p_node.public_id().name())
-                    > self.our_prefix().bit_count()
+        let new_size = self
+            .elders_and_adults()
+            .filter(|id| {
+                self.our_id.name().common_prefix(id.name()) > self.our_prefix().bit_count()
             })
             .count();
         let min_split_size = self.min_split_size();
         // If either of the two new sections will not contain enough entries, return `false`.
-        Ok(new_size >= min_split_size && members.len() >= min_split_size + new_size)
+        Ok(new_size >= min_split_size
+            && self.elders_and_adults().count() >= min_split_size + new_size)
     }
 
-    /// Splits our section and generates new section infos for the child sections.
+    /// Splits our section and generates new elders infos for the child sections.
     fn split_self(&mut self) -> Result<(EldersInfo, EldersInfo), RoutingError> {
-        let members = self.expected_elders_p2p();
-
         let next_bit = self.our_id.name().bit(self.our_prefix().bit_count());
 
         let our_prefix = self.our_prefix().pushed(next_bit);
         let other_prefix = self.our_prefix().pushed(!next_bit);
 
-        let (our_new_section, other_section) = members
-            .into_iter()
-            .partition(|p2p_node| our_prefix.matches(p2p_node.name()));
+        let our_new_section = self.eldest_members_matching_prefix(&our_prefix);
+        let other_section = self.eldest_members_matching_prefix(&other_prefix);
 
         let our_new_info =
             EldersInfo::new(our_new_section, our_prefix, Some(&self.state.new_info))?;
