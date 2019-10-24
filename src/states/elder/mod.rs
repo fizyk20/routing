@@ -10,8 +10,9 @@
 mod tests;
 
 use super::{
+    adult::AdultDetails,
     common::{Approved, Base, GOSSIP_TIMEOUT},
-    BootstrappingPeer,
+    Adult, BootstrappingPeer,
 };
 #[cfg(feature = "mock_base")]
 use crate::messages::Message;
@@ -164,6 +165,22 @@ impl Elder {
         let mut elder = Self::new(details, false, Default::default());
         elder.init(elders_info, old_pfx, event_backlog, outbox)?;
         Ok(elder)
+    }
+
+    pub fn demote(self) -> Result<State, RoutingError> {
+        let details = AdultDetails {
+            network_service: self.network_service,
+            event_backlog: Vec::new(),
+            direct_msg_backlog: Vec::new(),
+            routing_msg_backlog: Vec::new(),
+            full_id: self.full_id,
+            gen_pfx_info: self.gen_pfx_info,
+            peer_map: self.peer_map,
+            routing_msg_filter: self.routing_msg_filter,
+            timer: self.timer,
+            network_cfg: self.chain.network_cfg(),
+        };
+        Adult::with_chain_and_map(details, self.chain, self.parsec_map).map(State::Adult)
     }
 
     pub fn pause(self) -> Result<PausedState, RoutingError> {
@@ -1595,6 +1612,9 @@ impl Approved for Elder {
         self.update_neighbour_connections(elders_change, outbox);
 
         if self_sec_update {
+            if !elders_info.members().contains(&self.full_id.public_id()) {
+                return Ok(Transition::Demote);
+            }
             // Vote to update our self messages proof
             self.vote_send_section_info_ack(SendAckMessagePayload {
                 ack_prefix: *elders_info.prefix(),

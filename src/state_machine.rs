@@ -263,6 +263,8 @@ pub enum Transition {
         elders_info: EldersInfo,
         old_pfx: Prefix<XorName>,
     },
+    // `Elder` state transition to `Adult` as a result of demotion
+    Demote,
     Terminate,
 }
 
@@ -275,6 +277,7 @@ impl Debug for Transition {
             Self::Relocate { .. } => write!(f, "Relocate"),
             Self::IntoAdult { .. } => write!(f, "IntoAdult"),
             Self::IntoElder { .. } => write!(f, "IntoElder"),
+            Self::Demote => write!(f, "Demote"),
             Self::Terminate => write!(f, "Terminate"),
         }
     }
@@ -393,7 +396,7 @@ impl StateMachine {
                 _ => unreachable!(),
             }),
             IntoAdult { gen_pfx_info } => self.state.replace_with(|state| match state {
-                State::JoiningPeer(src) => src.into_adult(gen_pfx_info, outbox),
+                State::JoiningPeer(src) => src.into_adult(gen_pfx_info),
                 _ => unreachable!(),
             }),
             IntoElder {
@@ -401,6 +404,10 @@ impl StateMachine {
                 old_pfx,
             } => self.state.replace_with(|state| match state {
                 State::Adult(src) => src.into_elder(elders_info, old_pfx, outbox),
+                _ => unreachable!(),
+            }),
+            Demote => self.state.replace_with(|state| match state {
+                State::Elder(src) => src.demote(),
                 _ => unreachable!(),
             }),
         }

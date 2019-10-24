@@ -73,16 +73,22 @@ pub struct Adult {
 }
 
 impl Adult {
-    pub fn from_joining_peer(
-        details: AdultDetails,
-        _outbox: &mut dyn EventBox,
-    ) -> Result<Self, RoutingError> {
+    pub fn from_joining_peer(details: AdultDetails) -> Result<Self, RoutingError> {
         let public_id = *details.full_id.public_id();
-        let parsec_timer_token = details.timer.schedule(POKE_TIMEOUT);
 
         let parsec_map = ParsecMap::new(details.full_id.clone(), &details.gen_pfx_info);
 
         let chain = Chain::new(details.network_cfg, public_id, details.gen_pfx_info.clone());
+
+        Self::with_chain_and_map(details, chain, parsec_map)
+    }
+
+    pub fn with_chain_and_map(
+        details: AdultDetails,
+        chain: Chain,
+        parsec_map: ParsecMap,
+    ) -> Result<Self, RoutingError> {
+        let parsec_timer_token = details.timer.schedule(POKE_TIMEOUT);
 
         let node = Self {
             chain,

@@ -85,11 +85,7 @@ impl JoiningPeer {
         joining_peer
     }
 
-    pub fn into_adult(
-        self,
-        gen_pfx_info: GenesisPfxInfo,
-        outbox: &mut dyn EventBox,
-    ) -> Result<State, RoutingError> {
+    pub fn into_adult(self, gen_pfx_info: GenesisPfxInfo) -> Result<State, RoutingError> {
         let details = AdultDetails {
             network_service: self.network_service,
             event_backlog: vec![],
@@ -102,7 +98,7 @@ impl JoiningPeer {
             timer: self.timer,
             network_cfg: self.network_cfg,
         };
-        Adult::from_joining_peer(details, outbox).map(State::Adult)
+        Adult::from_joining_peer(details).map(State::Adult)
     }
 
     pub fn rebootstrap(self) -> Result<State, RoutingError> {
