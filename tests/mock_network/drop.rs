@@ -40,13 +40,13 @@ fn node_drops() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, elder_size + 2);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, elder_size + 2);
     drop_node(&mut nodes, 0);
 
     // Trigger poll_and_resend to allow remaining nodes to gossip and
     // update their chain accordingly.
-    poll_and_resend(&mut nodes);
-    verify_invariant_for_all_nodes(&network, &mut nodes);
+    nodes.poll_and_resend();
+    nodes.verify_invariant_for_all_nodes(&network);
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn node_restart() {
         None,
     );
     let mut rng = network.new_rng();
-    let mut nodes = create_connected_nodes(&network, elder_size);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, elder_size);
 
     // Drop all but last node in random order:
     while nodes.len() > 1 {

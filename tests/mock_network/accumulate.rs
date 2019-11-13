@@ -6,7 +6,7 @@
 // KIND, either express or implied. Please review the Licences for the specific language governing
 // permissions and limitations relating to use of the SAFE Network Software.
 
-use super::{create_connected_nodes, gen_bytes, poll_all, sort_nodes_by_distance_to, TestNode};
+use super::{gen_bytes, TestNetwork, TestNode};
 use rand::Rng;
 use routing::{
     mock::Network, Authority, Event, EventStream, NetworkParams, XorName, THRESHOLD_DENOMINATOR,
@@ -15,6 +15,9 @@ use routing::{
 
 #[test]
 fn messages_accumulate_with_quorum() {
+    use maidsafe_utilities::log;
+    let _ = log::init(false);
+
     let section_size = 15;
     let network = Network::new(
         NetworkParams {
@@ -24,10 +27,10 @@ fn messages_accumulate_with_quorum() {
         None,
     );
     let mut rng = network.new_rng();
-    let mut nodes = create_connected_nodes(&network, section_size);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, section_size);
 
     let src = Authority::Section(rng.gen());
-    sort_nodes_by_distance_to(&mut nodes, &src.name());
+    nodes.sort_nodes_by_distance_to(nodes, &src.name());
 
     let send = |node: &mut TestNode, dst: &Authority<XorName>, content: Vec<u8>| {
         assert!(node.inner.send_message(src, *dst, content).is_ok());
@@ -45,13 +48,13 @@ fn messages_accumulate_with_quorum() {
     for node in nodes.iter_mut().take(quorum - 1) {
         send(node, &dst, content.clone());
     }
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     expect_no_event!(nodes[0]);
     send(&mut nodes[quorum - 1], &dst, content.clone());
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     expect_next_event!(nodes[0], Event::MessageReceived { .. });
     send(&mut nodes[quorum], &dst, content);
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     expect_no_event!(nodes[0]);
 
     let dst_grp = Authority::Section(src.name()); // The whole section.
@@ -62,17 +65,17 @@ fn messages_accumulate_with_quorum() {
     for node in nodes.iter_mut().take(quorum - 1) {
         send(node, &dst_grp, content.clone());
     }
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     for node in &mut *nodes {
         expect_no_event!(node);
     }
     send(&mut nodes[quorum - 1], &dst_grp, content.clone());
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     for node in &mut *nodes {
         expect_next_event!(node, Event::MessageReceived { .. });
     }
     send(&mut nodes[quorum], &dst_grp, content);
-    let _ = poll_all(&mut nodes);
+    let _ = nodes.poll_all();
     for node in &mut *nodes {
         expect_no_event!(node);
     }

@@ -15,13 +15,7 @@ mod node_ageing;
 mod secure_message_delivery;
 mod utils;
 
-pub use self::utils::{
-    add_connected_nodes_until_one_away_from_split, add_connected_nodes_until_split,
-    clear_relocation_overrides, count_sections, create_connected_nodes,
-    create_connected_nodes_until_split, current_sections, gen_bytes, gen_range, gen_range_except,
-    poll_all, poll_and_resend, poll_and_resend_with_options, remove_nodes_which_failed_to_connect,
-    sort_nodes_by_distance_to, verify_invariant_for_all_nodes, Nodes, PollOptions, TestNode,
-};
+pub use self::utils::{gen_bytes, gen_range, gen_range_except, PollOptions, TestNetwork, TestNode};
 use itertools::Itertools;
 use rand::Rng;
 use routing::{
@@ -53,38 +47,8 @@ fn test_nodes(percentage_size: usize) {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, size);
-    verify_invariant_for_all_nodes(&network, &mut nodes);
-}
-
-fn nodes_with_prefix_mut<'a>(
-    nodes: &'a mut [TestNode],
-    prefix: &'a Prefix<XorName>,
-) -> impl Iterator<Item = &'a mut TestNode> {
-    nodes
-        .iter_mut()
-        .filter(move |node| prefix.matches(&node.name()))
-}
-
-pub fn count_sections_members_if_split(nodes: &[TestNode]) -> BTreeMap<Prefix<XorName>, usize> {
-    let mut counts = BTreeMap::new();
-    for pfx in nodes.iter().map(node_prefix_if_split) {
-        // Populate both sub-prefixes so the map keys cover the full address space.
-        // Needed as we use the keys to match sub-prefix of new node and we need to find it.
-        *counts.entry(pfx).or_default() += 1;
-        let _ = counts.entry(pfx.sibling()).or_default();
-    }
-    counts
-}
-
-pub fn node_prefix_if_split(node: &TestNode) -> Prefix<XorName> {
-    let prefix = node.our_prefix();
-
-    let sub_prefix = [prefix.pushed(false), prefix.pushed(true)]
-        .iter()
-        .find(|ref pfx| pfx.matches(&node.name()))
-        .cloned();
-    unwrap!(sub_prefix)
+    let mut nodes = TestNetwork::create_connected_nodes(&network, size);
+    nodes.verify_invariant_for_all_nodes(&network);
 }
 
 fn new_node_prefix_without_split(
@@ -127,12 +91,12 @@ fn disconnect_on_rebootstrap() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, 2);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, 2);
 
     // Try to bootstrap to another than the first node. With network size 2, this should fail.
     let config = NetworkConfig::node().with_hard_coded_contact(nodes[1].endpoint());
-    nodes.push(TestNode::builder(&network).network_config(config).create());
-    let _ = poll_all(&mut nodes);
+    nodes.add_node(TestNode::builder(&network).network_config(config).create());
+    let _ = nodes.poll_all();
 
     // When retrying to bootstrap, we should have disconnected from the bootstrap node.
     assert!(!network.is_connected(&nodes[2].endpoint(), &nodes[1].endpoint()));
@@ -204,8 +168,8 @@ fn single_section() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, sec_size);
-    verify_invariant_for_all_nodes(&network, &mut nodes);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, sec_size);
+    nodes.verify_invariant_for_all_nodes(&network);
 }
 
 #[test]
@@ -232,17 +196,17 @@ fn node_joins_in_front() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, 2 * LOWERED_ELDER_SIZE);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, 2 * LOWERED_ELDER_SIZE);
     let network_config = NetworkConfig::node().with_hard_coded_contact(nodes[0].endpoint());
-    nodes.insert(
+    nodes.insert_node(
         0,
         TestNode::builder(&network)
             .network_config(network_config)
             .create(),
     );
-    poll_and_resend(&mut nodes);
+    nodes.poll_and_resend();
 
-    verify_invariant_for_all_nodes(&network, &mut nodes);
+    nodes.verify_invariant_for_all_nodes(&network);
 }
 
 // Only run for mock parsec, as with DKG Joining node timeouts waiting for NodeApproval.
@@ -259,12 +223,12 @@ fn multiple_joining_nodes() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes(&network, LOWERED_ELDER_SIZE);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, LOWERED_ELDER_SIZE);
 
     while nodes.len() < 25 {
         info!("Size {}", nodes.len());
 
-        let mut count_if_split_node = count_sections_members_if_split(&nodes);
+        let mut count_if_split_node = nodes.count_sections_members_if_split();
         let min_split_size = unwrap!(nodes[0].inner.min_split_size());
 
         // Try adding five nodes at once, possibly to the same section. This makes sure one section
@@ -283,7 +247,7 @@ fn multiple_joining_nodes() {
 
                 if let Some(sub_prefix) = valid_sub_prefix {
                     *unwrap!(count_if_split_node.get_mut(&sub_prefix)) += 1;
-                    nodes.push(node);
+                    nodes.add_node(node);
                     break;
                 } else {
                     info!("Invalid node {:?}, {:?}", node.name(), count_if_split_node);
@@ -291,8 +255,8 @@ fn multiple_joining_nodes() {
             }
         }
 
-        poll_and_resend(&mut nodes);
-        let removed_count = remove_nodes_which_failed_to_connect(&mut nodes, count);
+        nodes.poll_and_resend();
+        let removed_count = nodes.remove_nodes_which_failed_to_connect(count);
         let nodes_added: Vec<_> = nodes
             .iter()
             .rev()
@@ -300,7 +264,7 @@ fn multiple_joining_nodes() {
             .map(TestNode::name)
             .collect();
         info!("Added Nodes: {:?}", nodes_added);
-        verify_invariant_for_all_nodes(&network, &mut nodes);
+        nodes.verify_invariant_for_all_nodes(&network);
         assert!(
             !nodes_added.is_empty(),
             "Should always handle at least one node"
@@ -317,8 +281,8 @@ fn multi_split() {
         },
         None,
     );
-    let mut nodes = create_connected_nodes_until_split(&network, vec![2, 2, 2, 2]);
-    verify_invariant_for_all_nodes(&network, &mut nodes);
+    let mut nodes = TestNetwork::create_connected_nodes_until_split(&network, vec![2, 2, 2, 2]);
+    nodes.verify_invariant_for_all_nodes(&network);
 }
 
 struct SimultaneousJoiningNode {
@@ -336,7 +300,7 @@ struct SimultaneousJoiningNode {
 // Proceed with testing joining nodes at the same time with the given configuration.
 fn simultaneous_joining_nodes(
     network: Network,
-    mut nodes: Nodes,
+    mut nodes: TestNetwork,
     nodes_to_add_setup: &[SimultaneousJoiningNode],
 ) {
     //
@@ -344,7 +308,7 @@ fn simultaneous_joining_nodes(
     // Setup nodes so relocation will happen as specified by nodes_to_add_setup.
     //
     let mut rng = network.new_rng();
-    rng.shuffle(&mut nodes);
+    nodes.shuffle(&mut rng);
 
     let mut nodes_to_add = Vec::new();
     for setup in nodes_to_add_setup {

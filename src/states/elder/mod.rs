@@ -1613,6 +1613,7 @@ impl Approved for Elder {
 
         if self_sec_update {
             if !elders_info.members().contains(&self.full_id.public_id()) {
+                info!("{} - Getting demoted", self);
                 return Ok(Transition::Demote);
             }
             // Vote to update our self messages proof

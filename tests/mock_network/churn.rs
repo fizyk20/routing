@@ -6,11 +6,7 @@
 // KIND, either express or implied. Please review the Licences for the specific language governing
 // permissions and limitations relating to use of the SAFE Network Software.
 
-use super::{
-    clear_relocation_overrides, count_sections, create_connected_nodes,
-    create_connected_nodes_until_split, current_sections, gen_range, gen_range_except,
-    poll_and_resend, verify_invariant_for_all_nodes, TestNode,
-};
+use super::{gen_range, gen_range_except, TestNetwork, TestNode};
 use itertools::Itertools;
 use rand::Rng;
 use routing::{
@@ -33,7 +29,7 @@ use std::{
 /// Note: it's necessary to call `poll_all` afterwards, as this function doesn't call it itself.
 fn drop_random_nodes<R: Rng>(
     rng: &mut R,
-    nodes: &mut Vec<TestNode>,
+    nodes: &mut TestNetwork,
     max_per_pfx: Option<usize>,
 ) -> BTreeSet<XorName> {
     let mut dropped_nodes = BTreeSet::new();
@@ -74,7 +70,7 @@ fn drop_random_nodes<R: Rng>(
         }
 
         *unwrap!(drop_count.get_mut(&pfx)) += 1;
-        let dropped = nodes.remove(i);
+        let dropped = nodes.remove_node(i);
         assert!(dropped_nodes.insert(dropped.name()));
     }
     dropped_nodes
@@ -88,7 +84,7 @@ fn drop_random_nodes<R: Rng>(
 fn add_nodes<R: Rng>(
     rng: &mut R,
     network: &Network,
-    nodes: &mut Vec<TestNode>,
+    nodes: &mut TestNetwork,
     skip_some_prefixes: bool,
 ) -> BTreeSet<usize> {
     let mut prefixes: BTreeSet<_> = nodes
@@ -190,7 +186,7 @@ fn add_nodes_and_poll<R: Rng>(
     allow_add_failure: bool,
 ) -> BTreeSet<XorName> {
     let new_indices = add_nodes(rng, &network, nodes, allow_add_failure);
-    poll_and_resend(&mut nodes);
+    nodes.poll_and_resend();
     let (added_names, failed_indices) = check_added_indices(nodes, new_indices);
 
     if !allow_add_failure && !failed_indices.is_empty() {
@@ -202,8 +198,8 @@ fn add_nodes_and_poll<R: Rng>(
         drop(nodes.remove(index));
     }
 
-    clear_relocation_overrides(nodes);
-    poll_and_resend(&mut nodes);
+    nodes.clear_relocation_overrides();
+    nodes.poll_and_resend();
     shuffle_nodes(rng, nodes);
 
     added_names
@@ -222,7 +218,7 @@ fn random_churn<R: Rng>(
         return BTreeSet::new();
     }
 
-    let section_count = count_sections(nodes);
+    let section_count = nodes.count_sections();
     if section_count < max_prefixes_len {
         return add_nodes(rng, &network, nodes, false);
     }
@@ -434,7 +430,7 @@ fn aggressive_churn() {
 
     // Create an initial network, increase until we have several sections, then
     // decrease back to elder_size, then increase to again.
-    let mut nodes = create_connected_nodes(&network, elder_size);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, elder_size);
 
     warn!(
         "Churn [{} nodes, {} sections]: adding nodes",
@@ -494,7 +490,7 @@ fn aggressive_churn() {
         }
 
         warn!("Dropping random nodes. Dropped: {:?}", dropped_nodes);
-        poll_and_resend(&mut nodes);
+        nodes.poll_and_resend();
         verify_invariant_for_all_nodes(&network, &mut nodes);
         send_and_receive(&mut rng, &mut nodes, elder_size);
         shuffle_nodes(&mut rng, &mut nodes);
@@ -525,7 +521,7 @@ fn messages_during_churn() {
     let mut rng = network.new_rng();
     let prefixes = vec![2, 2, 2, 3, 3];
     let max_prefixes_len = prefixes.len() * 2;
-    let mut nodes = create_connected_nodes_until_split(&network, prefixes);
+    let mut nodes = TestNetwork::create_connected_nodes_until_split(&network, prefixes);
 
     for i in 0..50 {
         warn!(
@@ -566,7 +562,7 @@ fn messages_during_churn() {
         expectations.send_and_expect(&content, auth_s0, auth_g0, &mut nodes, elder_size);
         expectations.send_and_expect(&content, auth_s0, auth_n0, &mut nodes, elder_size);
 
-        poll_and_resend(&mut nodes);
+        nodes.poll_and_resend();
         let (added_names, failed_indices) = check_added_indices(&mut nodes, new_indices);
         assert!(
             failed_indices.is_empty(),
@@ -599,8 +595,8 @@ fn remove_unresponsive_node() {
         None,
     );
 
-    let mut nodes = create_connected_nodes(&network, safe_section_size);
-    poll_and_resend(&mut nodes);
+    let mut nodes = TestNetwork::create_connected_nodes(&network, safe_section_size);
+    nodes.poll_and_resend();
     // Pause a node to act as non-responsive.
     let mut rng = network.new_rng();
     let non_responsive_index = rng.gen_range(1, nodes.len());
@@ -634,7 +630,7 @@ fn remove_unresponsive_node() {
             _non_responsive_node = Some(nodes.remove(non_responsive_index));
         }
 
-        poll_and_resend(&mut nodes);
+        nodes.poll_and_resend();
     }
 
     // Verify the other nodes saw the paused node and removed it.
